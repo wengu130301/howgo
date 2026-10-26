@@ -8,8 +8,10 @@ services:
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
-      - key: HOWGO_PUBLIC_URL
-        value: https://howgo.laswi.com.cn
+      # 回调地址默认自动跟随访问域名（x-forwarded-host），多域名同时可用；
+      # 如需强制固定（例如只在主域提供登录），再解注释并填完整地址
+      # - key: HOWGO_PUBLIC_URL
+      #   value: https://howgo.laswi.com.cn
       - key: HOWGO_ADMIN_KEY
         generateValue: true
       # 固定管理员密码：容器无持久盘，不固定则重启后无法复现
