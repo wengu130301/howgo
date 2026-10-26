@@ -462,14 +462,18 @@ add('GET', '/api/me', async (req, res, body, user) => {
 //     · 平台 CORS 未放行第三方源，服务端到服务端调用不受同源策略影响，正好绕过该限制
 // ---------------------------------------------------------------------------
 
-const LASWI_BASE = (process.env.LASWI_AUTH_BASE || 'https://rtuser.rtstudio.top').replace(/\/+$/, '');
-const LASWI_CLIENT_ID = process.env.LASWI_CLIENT_ID || '';
-const LASWI_CLIENT_SECRET = process.env.LASWI_CLIENT_SECRET || '';
-const LASWI_AUTHORIZE_PATH = process.env.LASWI_AUTHORIZE_PATH || '/auth/authorize';
-const LASWI_TOKEN_PATH = process.env.LASWI_TOKEN_PATH || '/auth/token';
-const LASWI_USER_PATH = process.env.LASWI_USER_PATH || '/auth/get-user';
-const LASWI_SCOPE = process.env.LASWI_SCOPE || 'openid profile';
-const LASWI_ENABLED = !!(LASWI_CLIENT_ID && LASWI_CLIENT_SECRET);
+// 热土引擎（REngine）统一用户认证：LaswI ID 即热土账号
+// 文档 https://rdd.rtstu.com ｜ 登录页 https://apilogin.rtstudio.top ｜ API https://appapi.rtstudio.top
+// 流程：跳登录页（TE=true 授权码模式）→ 回调拿一次性 code → 服务端 /exchange 换用户 token
+//       → 服务端 /get-user-by-token 取资料 → 本地建号 + 下发 HttpOnly Cookie
+const RENGINE_LOGIN_BASE = (process.env.LASWI_LOGIN_BASE || 'https://apilogin.rtstudio.top').replace(/\/+$/, '');
+const RENGINE_API_BASE = (process.env.LASWI_API_BASE || 'https://appapi.rtstudio.top').replace(/\/+$/, '');
+const RENGINE_APP_TYPE = String(process.env.LASWI_APP_TYPE || 'name').trim().toLowerCase(); // name | token | loginkey
+const RENGINE_APP_ID = process.env.LASWI_APP_ID || 'HowGo';
+const RENGINE_SOFTWARE_TOKEN = process.env.LASWI_SOFTWARE_TOKEN || '';
+const LASWI_ENABLED =
+  ((RENGINE_APP_TYPE === 'name' || RENGINE_APP_TYPE === 'token') && !!RENGINE_APP_ID) ||
+  (RENGINE_APP_TYPE === 'loginkey' && !!RENGINE_SOFTWARE_TOKEN);
 
 const LASWI_STATE_TTL = 10 * 60 * 1000;
 const laswiStates = new Map(); // state -> 生成时间
@@ -491,11 +495,21 @@ function redirect(res, location) {
   res.end();
 }
 
+function rengineProfile(raw) {
+  let p = raw;
+  if (Array.isArray(p)) p = p[0] || {};
+  return p && typeof p === 'object' ? p : {};
+}
+
+function rengineUserId(p) {
+  return (p && (p.id ?? p.user_id ?? p.uid ?? p.userId ?? p.openid)) || '';
+}
+
 function laswiDisplayName(profile) {
   const raw = String(profile.nickname || profile.name || profile.username || '').trim();
   const base = raw.replace(/[^\u4e00-\u9fa5A-Za-z0-9_]/g, '').slice(0, 14);
   if (base.length >= 2) return base;
-  return 'laswi' + String(profile.id || profile.user_id || '').slice(-6);
+  return 'laswi' + String(rengineUserId(profile)).slice(-6);
 }
 
 // 健康检查：平台探活 / 隧道连通性验证
@@ -537,20 +551,42 @@ add('GET', '/api/auth/methods', async (req, res) => {
 }, { public: true });
 
 add('GET', '/api/auth/laswi/start', async (req, res) => {
-  if (!LASWI_ENABLED) {
-    return redirect(res, '/?login_error=' + encodeURIComponent('LaswI ID 登录未配置'));
-  }
+  const fail = (msg) => redirect(res, '/?login_error=' + encodeURIComponent(msg));
+  if (!LASWI_ENABLED) return fail('LaswI ID 登录未配置');
+
   const state = crypto.randomBytes(16).toString('hex');
   laswiStates.set(state, Date.now());
   for (const [k, t] of laswiStates) {
     if (Date.now() - t > LASWI_STATE_TTL) laswiStates.delete(k);
   }
-  const u = new URL(LASWI_BASE + LASWI_AUTHORIZE_PATH);
-  u.searchParams.set('response_type', 'code');
-  u.searchParams.set('client_id', LASWI_CLIENT_ID);
-  u.searchParams.set('redirect_uri', publicBase(req) + '/api/auth/laswi/callback');
-  u.searchParams.set('scope', LASWI_SCOPE);
+
+  // loginkey 模式：先用软件 Token 换 10 分钟有效的登录 Key，避免软件 Token 出现在 URL/日志里
+  let appType = RENGINE_APP_TYPE;
+  let appValue = RENGINE_APP_ID;
+  if (appType === 'loginkey') {
+    try {
+      const keyRes = await fetch(
+        RENGINE_API_BASE + '/login-token?token=' + encodeURIComponent(RENGINE_SOFTWARE_TOKEN),
+        { headers: { accept: 'application/json' } }
+      );
+      const payload = await keyRes.json().catch(() => ({}));
+      const key = payload && payload.data && payload.data.login_key;
+      if (!keyRes.ok || !payload.success || !key) throw new Error(payload.message || '获取登录 Key 失败');
+      appValue = key;
+    } catch (e) {
+      console.error('[howgo] laswi-start', e.message);
+      return fail('LaswI 授权失败：' + e.message);
+    }
+  }
+
+  // Web 应用：port 传完整回调地址；TE=true 走授权码交换模式，用户 Token 不经过浏览器
+  const u = new URL(RENGINE_LOGIN_BASE + '/');
+  u.searchParams.set('port', publicBase(req) + '/api/auth/laswi/callback');
+  u.searchParams.set('type', appType);
+  u.searchParams.set('v', appValue);
   u.searchParams.set('state', state);
+  u.searchParams.set('env', 'web');
+  u.searchParams.set('TE', 'true');
   redirect(res, u.toString());
 }, { public: true });
 
@@ -558,46 +594,51 @@ add('GET', '/api/auth/laswi/callback', async (req, res) => {
   const fail = (msg) => redirect(res, '/?login_error=' + encodeURIComponent(msg));
   if (!LASWI_ENABLED) return fail('LaswI ID 登录未配置');
 
-  const code = req.searchParams.get('code') || '';
   const state = req.searchParams.get('state') || '';
-  if (!code || !state || !laswiStates.has(state)) return fail('登录状态校验失败，请重新登录');
+  const cbType = String(req.searchParams.get('type') || '').toLowerCase();
+  const cbValue = req.searchParams.get('v') || '';
+  if (!state || !laswiStates.has(state)) return fail('登录状态校验失败，请重新登录');
   laswiStates.delete(state);
+  if (cbType === 'error') return fail('LaswI 授权失败：' + (cbValue || '用户取消或平台拒绝'));
+  if (!cbValue) return fail('LaswI 未返回授权凭证');
 
-  const redirectUri = publicBase(req) + '/api/auth/laswi/callback';
   let accessToken = '';
   let profile = null;
 
   try {
-    const tokenRes = await fetch(LASWI_BASE + LASWI_TOKEN_PATH, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: redirectUri,
-        client_id: LASWI_CLIENT_ID,
-        client_secret: LASWI_CLIENT_SECRET
-      })
-    });
-    const payload = await tokenRes.json().catch(() => ({}));
-    if (!tokenRes.ok || !payload.access_token) {
-      throw new Error(payload.error_description || payload.error || '授权码换取令牌失败');
+    if (cbType === 'code') {
+      const exRes = await fetch(RENGINE_API_BASE + '/exchange', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ code: cbValue })
+      });
+      const exPayload = await exRes.json().catch(() => ({}));
+      if (!exRes.ok || !exPayload.success || !(exPayload.data && exPayload.data.token)) {
+        throw new Error(exPayload.message || '授权码换取令牌失败');
+      }
+      accessToken = exPayload.data.token;
+    } else if (cbType === 'success') {
+      accessToken = cbValue;
+    } else {
+      throw new Error('未知的回调类型：' + (cbType || '空'));
     }
-    accessToken = payload.access_token;
 
-    const userRes = await fetch(LASWI_BASE + LASWI_USER_PATH, {
-      headers: { authorization: 'Bearer ' + accessToken, accept: 'application/json' }
+    const userRes = await fetch(RENGINE_API_BASE + '/get-user-by-token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ token: accessToken })
     });
-    profile = await userRes.json().catch(() => ({}));
-    if (!userRes.ok || !profile || (!profile.id && !profile.user_id)) {
-      throw new Error(profile.error || '读取 LaswI 用户资料失败');
+    const userPayload = await userRes.json().catch(() => ({}));
+    profile = rengineProfile(userPayload.data || userPayload.user || userPayload);
+    if (!userRes.ok || userPayload.success === false || !rengineUserId(profile)) {
+      throw new Error(userPayload.message || '读取热土用户资料失败');
     }
   } catch (e) {
     console.error('[howgo] laswi-login', e.message);
     return fail('LaswI 授权失败：' + e.message);
   }
 
-  const laswiId = String(profile.id || profile.user_id);
+  const laswiId = String(rengineUserId(profile));
   const bound = db.users.find((u) => u.laswiId === laswiId);
 
   // 管理员不得通过 LaswI ID 登录：管理员只走「密码 + 管理密钥」，第三方入口一律拒绝

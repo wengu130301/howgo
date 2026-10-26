@@ -45,15 +45,18 @@ PORT=8080 node server.js       # 换端口
 | 令牌持有 | Rust/SQLite，前端不可见 | 服务端内存会话 `sessions[].laswiToken`，前端响应中无 token 字段 |
 | 前端视图 | `stores/identity.ts`（仅 id/昵称/头像） | `state.me`（仅 id/name/role/provider） |
 
-OAuth2 授权码模式，**换取令牌全程在服务端完成**：
+热土引擎（REngine）统一用户认证的 Web 应用接入，**换取令牌全程在服务端完成**（文档 `https://rdd.rtstu.com`）：
 
 ```
-GET /api/auth/laswi/start     生成 state → 302 跳转 LaswI 授权页
-        ↓ 用户在 LaswI 完成授权
-GET /api/auth/laswi/callback?code&state
+GET /api/auth/laswi/start
+        生成 state → 302 跳 apilogin.rtstudio.top
+        参数：port=回调地址 & type=name|token|loginkey & v=标识 & state & env=web & TE=true
+        （loginkey 模式先服务端 GET appapi/login-token 换 10 分钟登录 Key，软件 Token 不进 URL）
+        ↓ 用户在热土登录页完成登录
+GET /api/auth/laswi/callback?type=code&v=AUTH_CODE&state=...
         1) 校验 state（10 分钟有效，一次性）
-        2) 服务端 POST 换 access_token      ← 前端看不到
-        3) 服务端 GET 用户资料               ← 只取 id/昵称/头像
+        2) 服务端 POST {API}/exchange {code} → 用户 access_token   ← 前端看不到
+        3) 服务端 POST {API}/get-user-by-token {token} → 用户资料   ← 只取 id/昵称/头像
         4) 按 laswiId 查找或创建本地账号
         5) 下发 HttpOnly Cookie 会话 → 302 回 /
 ```
@@ -61,24 +64,22 @@ GET /api/auth/laswi/callback?code&state
 关键设计点（与 Gugu Browser 一致的经验）：
 
 - **令牌不入前端**：`access_token` 只存在 `sessions` 的内存副本里，任何 `/api/me` 响应都不含 token；Cookie 为 `HttpOnly; SameSite=Lax`。
-- **绕过平台 CORS 限制**：LaswI 平台未对第三方源放行 `Access-Control-Allow-Origin`，浏览器直连必被拦；本实现的授权码交换是**服务端到服务端**调用，天然不受同源策略约束，无需额外 Worker 代理。
-- **不编造凭据**：未配置 `LASWI_CLIENT_ID` / `LASWI_CLIENT_SECRET` 时，`/api/auth/methods` 返回 `laswi:false`，前端按钮置灰并显式提示「LaswI ID 登录暂未配置」，绝不出现假登录。
+- **platform 侧不跨域**：/exchange 与 /get-user-by-token 均为服务端到服务端调用，浏览器不接触平台接口，天然不受同源策略约束。
+- **不编造凭据**：未配置软件标识（`name/token` 模式的 `LASWI_APP_ID`，或 `loginkey` 模式的 `LASWI_SOFTWARE_TOKEN`）时，`/api/auth/methods` 返回 `laswi:false`，前端按钮置灰并显式提示「LaswI ID 登录暂未配置」，绝不出现假登录。
 - **管理员排除**：回调里若 `laswiId` 已绑定 `role=admin` 的账号，直接 302 回 `/?login_error=管理员账号不支持 LaswI ID 登录…`，不下发会话，并写审计 `laswi-login-denied`。
 
 ### 配置
 
 ```bash
-export LASWI_CLIENT_ID=xxx
-export LASWI_CLIENT_SECRET=xxx
-export LASWI_AUTH_BASE=https://rtuser.rtstudio.top   # 默认值
-export LASWI_AUTHORIZE_PATH=/auth/authorize          # 按平台实际端点覆盖
-export LASWI_TOKEN_PATH=/auth/token
-export LASWI_USER_PATH=/auth/get-user
-export LASWI_SCOPE="openid profile"
-export HOWGO_PUBLIC_URL=https://howgo.example.com    # 反代后必须显式指定，否则回调地址会错
+export LASWI_LOGIN_BASE=https://apilogin.rtstudio.top   # 默认值，热土登录页
+export LASWI_API_BASE=https://appapi.rtstudio.top       # 默认值，热土 API 网关
+export LASWI_APP_TYPE=name        # name=未验证软件；token=已验证(填软件Token)；loginkey=软件Token换临时Key（推荐）
+export LASWI_APP_ID=HowGo         # name 模式填软件名；token 模式填 64 位软件 Token
+export LASWI_SOFTWARE_TOKEN=      # 仅 loginkey 模式必填（软件 Token），服务端换 Key，不进 URL
+export HOWGO_PUBLIC_URL=https://howgo.example.com       # 反代后必须显式指定，否则回调地址会错
 ```
 
-> 端点路径按 LaswI 平台实际文档填写；本实现只依赖「授权码换 token + Bearer 取资料」这一标准契约，不硬编码任何未验证的接口。
+> `name` 模式零申请即可登录，但热土登录页会标注「未验证软件」风险提示；拿到软件 Token 后把 `LASWI_APP_TYPE` 改为 `loginkey` 并填 `LASWI_SOFTWARE_TOKEN`，即变为已验证软件且 Token 不暴露。
 
 ---
 

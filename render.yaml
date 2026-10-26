@@ -20,9 +20,15 @@ services:
         sync: false
       - key: HOWGO_STORE_KEY
         sync: false
-      - key: LASWI_CLIENT_ID
+      - key: LASWI_LOGIN_BASE
+        value: https://apilogin.rtstudio.top
+      - key: LASWI_API_BASE
+        value: https://appapi.rtstudio.top
+      # name=未验证软件直接用软件名；token=已验证软件填 64 位软件 Token；loginkey=软件 Token 换临时 Key（推荐）
+      - key: LASWI_APP_TYPE
+        value: name
+      - key: LASWI_APP_ID
+        value: HowGo
+      # 仅 loginkey 模式需要：在 Render 控制台填软件 Token，并把 LASWI_APP_TYPE 改为 loginkey
+      - key: LASWI_SOFTWARE_TOKEN
         sync: false
-      - key: LASWI_CLIENT_SECRET
-        sync: false
-      - key: LASWI_AUTH_BASE
-        value: https://rtuser.rtstudio.top
