@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HowGo</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div id="app" class="app hidden">
+    <!-- 左侧导航栏 -->
+    <aside class="rail">
+      <div class="rail-logo howgo" title="HowGo">H</div>
+      <div class="rail-brand">HowGo</div>
+      <nav class="rail-nav">
+        <button class="rail-btn active" data-tab="chats" title="聊天">
+          <svg viewBox="0 0 24 24"><path d="M4 5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H9l-4 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <span class="rail-badge hidden" id="chatBadge"></span>
+        </button>
+        <button class="rail-btn" data-tab="contacts" title="通讯录">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5 19c.8-3.2 3.6-5 7-5s6.2 1.8 7 5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <span class="rail-badge hidden" id="friendBadge"></span>
+        </button>
+        <button class="rail-btn" data-tab="moments" title="朋友圈">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12" cy="5" r="1.1" fill="currentColor"/></svg>
+        </button>
+        <button class="rail-btn hidden" data-tab="admin" title="管理后台" id="adminTabBtn">
+          <svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.6-3 8.6-7 10-4-1.4-7-5.4-7-10V6z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        </button>
+      </nav>
+      <div class="rail-bottom">
+        <button class="rail-btn" id="btnMyProfile" title="我">
+          <span id="railAvatar"></span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- 侧栏 -->
+    <section class="side" id="sidePanel"></section>
+
+    <!-- 主内容区 -->
+    <main class="main" id="mainPanel"></main>
+  </div>
+
+  <!-- 全局弹层 -->
+  <div id="modalRoot"></div>
+  <div id="toastRoot"></div>
+  <div id="loading" class="loading hidden"><div class="loading-spin"></div></div>
+
+  <script src="/js/common.js"></script>
+  <script src="/js/moments.js"></script>
+  <script src="/js/admin.js"></script>
+  <script src="/js/main.js"></script>
+</body>
+</html>

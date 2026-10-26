@@ -52,22 +52,86 @@ function freshDb() {
   };
 }
 
-if (!fs.existsSync(DB_FILE)) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(freshDb(), null, 2), 'utf8');
+// ---------------------------------------------------------------------------
+// 1b. 云端存储（PostgREST 兼容，如 Supabase）：整份 db 存成一行 jsonb
+//     - 配置 HOWGO_STORE_URL / HOWGO_STORE_KEY 即切换到云端，数据不随实例重建丢失
+//     - 未配置时退化为本地 data/db.json（开发与自托管）
+// ---------------------------------------------------------------------------
+const STORE_URL = String(process.env.HOWGO_STORE_URL || '').replace(/\/+$/, '');
+const STORE_KEY = String(process.env.HOWGO_STORE_KEY || '');
+const CLOUD = Boolean(STORE_URL && STORE_KEY);
+const DB_ROW = 'db';
+
+let db = freshDb();
+let dbLoaded = !CLOUD;
+let loadPromise = null;
+
+function storeHeaders() {
+  return {
+    apikey: STORE_KEY,
+    Authorization: 'Bearer ' + STORE_KEY,
+    'Content-Type': 'application/json'
+  };
 }
-const db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+
+async function persistNow() {
+  if (!CLOUD) {
+    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
+    return;
+  }
+  const res = await fetch(STORE_URL + '/rest/v1/howgo_kv', {
+    method: 'POST',
+    headers: Object.assign(storeHeaders(), {
+      Prefer: 'resolution=merge-duplicates,return=minimal'
+    }),
+    body: JSON.stringify([{ key: DB_ROW, value: db, updated_at: new Date().toISOString() }])
+  });
+  if (!res.ok) throw new Error('写入云端失败 HTTP ' + res.status + ' ' + (await res.text()));
+}
+
+async function loadFromCloud() {
+  const res = await fetch(STORE_URL + '/rest/v1/howgo_kv?key=eq.' + DB_ROW + '&select=value', {
+    headers: storeHeaders()
+  });
+  if (!res.ok) throw new Error('读取云端失败 HTTP ' + res.status + ' ' + (await res.text()));
+  const rows = await res.json();
+  if (Array.isArray(rows) && rows.length && rows[0].value) {
+    db = rows[0].value;
+    if (!db.users) db = freshDb();
+  } else {
+    await persistNow(); // 首次部署：写入初始库
+  }
+}
+
+// 请求入口统一 await 一次；失败时重试，绝不静默用空库覆盖云端
+async function ensureLoaded() {
+  if (dbLoaded) return;
+  if (!loadPromise) {
+    loadPromise = loadFromCloud()
+      .then(() => { dbLoaded = true; initAdmin(); })
+      .catch((e) => { loadPromise = null; throw e; });
+  }
+  await loadPromise;
+}
+
+if (!CLOUD) {
+  if (!fs.existsSync(DB_FILE)) {
+    fs.writeFileSync(DB_FILE, JSON.stringify(freshDb(), null, 2), 'utf8');
+  }
+  db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+}
 
 let saveTimer = null;
 function persist() {
+  if (CLOUD && !dbLoaded) {
+    console.error('[howgo] 数据尚未从云端就绪，跳过本次写入以防覆盖');
+    return;
+  }
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    try {
-      fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
-    } catch (e) {
-      console.error('[howgo] 写库失败：', e.message);
-    }
-  }, 150);
+    persistNow().catch((e) => console.error('[howgo] 写库失败：', e.message));
+  }, CLOUD ? 300 : 150);
 }
 
 // ---------------------------------------------------------------------------
@@ -442,8 +506,24 @@ add('GET', '/api/health', async (req, res) => {
     version: '1.1.0',
     users: db.users.length,
     laswi: LASWI_ENABLED,
+    storage: CLOUD ? 'cloud' : 'file',
     uptime: Math.round(process.uptime())
   });
+}, { public: true });
+
+// 保活探针：同时唤醒实例并真实读一次云端库，避免免费层 / 免费库因低活跃被休眠或暂停
+add('GET', '/api/ping', async (req, res) => {
+  const t0 = Date.now();
+  let store = CLOUD ? 'cloud' : 'file';
+  if (CLOUD) {
+    try {
+      const r = await fetch(STORE_URL + '/rest/v1/howgo_kv?select=key&limit=1', { headers: storeHeaders() });
+      store = r.ok ? 'cloud-ok' : 'cloud-' + r.status;
+    } catch (e) {
+      store = 'cloud-error';
+    }
+  }
+  json(res, 200, { ok: true, store, users: db.users.length, ms: Date.now() - t0, t: new Date().toISOString() });
 }, { public: true });
 
 // 登录方式声明：普通用户仅 LaswI ID；密码入口只服务于管理员（管理员同样不能走 LaswI ID）
@@ -972,6 +1052,13 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const pathname = url.pathname;
 
+  try {
+    await ensureLoaded();
+  } catch (e) {
+    res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' });
+    return res.end(JSON.stringify({ error: '数据服务暂时不可用，请稍后重试' }));
+  }
+
   if (!pathname.startsWith('/api/')) return serveStatic(req, res);
 
   req.searchParams = url.searchParams;
@@ -1006,51 +1093,75 @@ const server = http.createServer(async (req, res) => {
 // ---------------------------------------------------------------------------
 
 let ADMIN_KEY = ENV_ADMIN_KEY;
+let adminReady = false;
 
-if (!db.users.some((u) => u.role === 'admin')) {
-  const password = ENV_ADMIN_PASSWORD || crypto.randomBytes(9).toString('base64url');
-  if (!ADMIN_KEY) ADMIN_KEY = crypto.randomBytes(9).toString('base64url');
-  const { salt, hash } = hashPassword(password);
-  const admin = {
-    id: db.seq.userId++,
-    name: 'admin',
-    salt,
-    hash,
-    role: 'admin',
-    createdAt: nowIso(),
-    bannedUntil: null,
-    bannedReason: null
-  };
-  db.users.push(admin);
-  persist();
-  const cred =
-    'HowGo 管理员凭据（首次启动生成，请妥善保管后删除本文件）\n' +
-    '生成时间：' + nowIso() + '\n' +
-    'HowGo 号：admin\n' +
-    '密码：' + password + '\n' +
-    '管理密钥：' + ADMIN_KEY + '\n' +
-    '提示：登录时勾选「管理员登录」，账号密码之外还需填写管理密钥。\n' +
-    '如需重置，删除 data/db.json 后重启服务。\n';
-  fs.writeFileSync(CRED_FILE, cred, 'utf8');
-  fs.writeFileSync(path.join(DATA_DIR, 'admin-key.txt'), ADMIN_KEY + '\n', 'utf8');
-  console.log('\n===== HowGo 管理员账号已创建 =====');
-  console.log('账号：admin');
-  console.log('密码：' + password);
-  console.log('管理密钥：' + ADMIN_KEY);
-  console.log('凭据文件：' + CRED_FILE);
-  console.log('=================================\n');
-} else if (!ADMIN_KEY) {
-  // 管理密钥持久化：重启后保持一致，避免管理员被锁在门外
-  const keyFile = path.join(DATA_DIR, 'admin-key.txt');
-  if (fs.existsSync(keyFile)) {
-    ADMIN_KEY = fs.readFileSync(keyFile, 'utf8').trim();
-    console.log('[howgo] 已从 data/admin-key.txt 读取管理密钥');
-  } else {
-    ADMIN_KEY = crypto.randomBytes(9).toString('base64url');
-    fs.writeFileSync(keyFile, ADMIN_KEY + '\n', 'utf8');
-    console.log('[howgo] 已生成管理密钥并写入 data/admin-key.txt：' + ADMIN_KEY);
+// 管理员初始化：云端模式下必须在数据加载完成后执行，否则每次冷启动都会重复建号
+function initAdmin() {
+  if (adminReady) return;
+  adminReady = true;
+
+  if (CLOUD && !ENV_ADMIN_PASSWORD) {
+    console.warn('[howgo] 警告：云端模式未设置 HOWGO_ADMIN_PASSWORD，管理员密码为随机值且重启后不可复现，请在环境变量中固定。');
+  }
+
+  if (!db.users.some((u) => u.role === 'admin')) {
+    const password = ENV_ADMIN_PASSWORD || crypto.randomBytes(9).toString('base64url');
+    if (!ADMIN_KEY) ADMIN_KEY = crypto.randomBytes(9).toString('base64url');
+    const { salt, hash } = hashPassword(password);
+    const admin = {
+      id: db.seq.userId++,
+      name: 'admin',
+      salt,
+      hash,
+      role: 'admin',
+      createdAt: nowIso(),
+      bannedUntil: null,
+      bannedReason: null
+    };
+    db.users.push(admin);
+    persist();
+    const cred =
+      'HowGo 管理员凭据（首次启动生成，请妥善保管后删除本文件）\n' +
+      '生成时间：' + nowIso() + '\n' +
+      'HowGo 号：admin\n' +
+      '密码：' + password + '\n' +
+      '管理密钥：' + ADMIN_KEY + '\n' +
+      '提示：登录时勾选「管理员登录」，账号密码之外还需填写管理密钥。\n' +
+      '如需重置，删除 data/db.json 后重启服务。\n';
+    fs.writeFileSync(CRED_FILE, cred, 'utf8');
+    fs.writeFileSync(path.join(DATA_DIR, 'admin-key.txt'), ADMIN_KEY + '\n', 'utf8');
+    console.log('\n===== HowGo 管理员账号已创建 =====');
+    console.log('账号：admin');
+    console.log('密码：' + password);
+    console.log('管理密钥：' + ADMIN_KEY);
+    console.log('凭据文件：' + CRED_FILE);
+    console.log('=================================\n');
+  } else if (!ADMIN_KEY) {
+    // 管理密钥持久化：重启后保持一致，避免管理员被锁在门外
+    const keyFile = path.join(DATA_DIR, 'admin-key.txt');
+    if (fs.existsSync(keyFile)) {
+      ADMIN_KEY = fs.readFileSync(keyFile, 'utf8').trim();
+      console.log('[howgo] 已从 data/admin-key.txt 读取管理密钥');
+    } else {
+      ADMIN_KEY = crypto.randomBytes(9).toString('base64url');
+      fs.writeFileSync(keyFile, ADMIN_KEY + '\n', 'utf8');
+      console.log('[howgo] 已生成管理密钥并写入 data/admin-key.txt：' + ADMIN_KEY);
+    }
   }
 }
+
+// 启动：先加载云端数据（若启用），再做管理员初始化，最后监听
+(async () => {
+  if (CLOUD) {
+    try {
+      await ensureLoaded();
+      console.log('[howgo] 云端数据已加载，用户数：' + db.users.length);
+    } catch (e) {
+      console.error('[howgo] 启动时加载云端数据失败（首个请求会自动重试）：' + e.message);
+    }
+  }
+  initAdmin();
+})();
 
 server.listen(PORT, HOST, () => {
   console.log('[howgo] 服务已启动： http://127.0.0.1:' + PORT);

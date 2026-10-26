@@ -12,6 +12,14 @@ services:
         value: https://howgo.laswi.com.cn
       - key: HOWGO_ADMIN_KEY
         generateValue: true
+      # 固定管理员密码：容器无持久盘，不固定则重启后无法复现
+      - key: HOWGO_ADMIN_PASSWORD
+        generateValue: true
+      # 云端数据（Supabase 项目 URL 形如 https://xxxx.supabase.co，以及 service_role key）
+      - key: HOWGO_STORE_URL
+        sync: false
+      - key: HOWGO_STORE_KEY
+        sync: false
       - key: LASWI_CLIENT_ID
         sync: false
       - key: LASWI_CLIENT_SECRET

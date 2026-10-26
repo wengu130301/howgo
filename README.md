@@ -180,3 +180,13 @@ howgo/
 - 生产必须：HTTPS + 反向代理（并设 `HOWGO_PUBLIC_URL`）、删除凭据明文文件、`HOWGO_ADMIN_KEY` 走密钥管理
 - 内容审核是本地词库 + 正则，属「基础防线」；正式产品应再接入平台级内容安全服务（文本 + 图片），本实现已预留审核结果字段 `status/flags/masked`
 *（内容由AI生成，仅供参考）*
+
+---
+
+## 部署
+
+- 本地/自建服务器：`node server.js` 或 `docker compose up -d`，见 `DEPLOY.md`
+- **免费公网部署（不用本机 Mac 常开）：见 `DEPLOY-CLOUD.md`** —— Render 免费层 + Supabase 云端存储 + GitHub Actions 保活
+
+存储模式由环境变量决定：配了 `HOWGO_STORE_URL` / `HOWGO_STORE_KEY` 走云端库，否则用本地 `data/db.json`。
+

@@ -1,0 +1,27 @@
+name: keepalive
+
+# 免费层保活：每天唤醒一次站点（Render 免费实例休眠中会被拉起），
+# 同时让 /api/ping 真实读一次云端库，避免 Supabase 免费项目 7 天低活跃被暂停。
+on:
+  schedule:
+    - cron: '17 3 * * *'      # UTC 03:17 = 北京时间 11:17
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wake site
+        run: |
+          set -x
+          curl -sS -m 120 -o /dev/null -w 'wake=%{http_code} time=%{time_total}s\n' https://howgo.laswi.com.cn/ || true
+          sleep 5
+      - name: Deep ping (site + cloud db)
+        run: |
+          for i in 1 2 3; do
+            out=$(curl -sS -m 60 https://howgo.laswi.com.cn/api/ping) && echo "$out" && \
+            echo "$out" | grep -q '"store":"cloud-ok"' && exit 0
+            echo "第 $i 次未就绪，10s 后重试"; sleep 10
+          done
+          echo "保活失败：站点或云端库不可用"; exit 1

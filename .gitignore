@@ -1,6 +1,7 @@
+# 运行时数据（含账号哈希与管理员凭据，绝不入库）
 data/
-.env
 *.log
-.DS_Store
-_legacy_pages_site/
+.env
+.env.*
 node_modules/
+.DS_Store
