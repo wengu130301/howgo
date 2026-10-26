@@ -1,0 +1,35 @@
+services:
+  howgo:
+    build: .
+    container_name: howgo
+    restart: unless-stopped
+    environment:
+      PORT: "5210"
+      HOWGO_PUBLIC_URL: https://howgo.laswi.com.cn
+      HOWGO_ADMIN_KEY: ${HOWGO_ADMIN_KEY:?请先在 .env 中设置管理密钥}
+      LASWI_CLIENT_ID: ${LASWI_CLIENT_ID:?请在 .env 中设置 LaswI Client ID}
+      LASWI_CLIENT_SECRET: ${LASWI_CLIENT_SECRET:?请在 .env 中设置 LaswI Client Secret}
+      LASWI_AUTH_BASE: ${LASWI_AUTH_BASE:-https://rtuser.rtstudio.top}
+    volumes:
+      - howgo-data:/app/data
+    expose:
+      - "5210"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: howgo-caddy
+    restart: unless-stopped
+    depends_on:
+      - howgo
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  howgo-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,14 @@
+{
+  "name": "howgo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HowGo —— 类微信/QQ 的即时通讯网页，LaswI ID 登录 + 管理员双因素 + 违规内容防传播",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check public/app.js && node --check public/admin.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

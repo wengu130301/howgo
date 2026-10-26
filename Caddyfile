@@ -1,0 +1,20 @@
+# Caddy 自动申请并续期 Let's Encrypt 证书
+# 前置条件：howgo.laswi.com.cn 的 DNS A/AAAA 记录指向本机公网 IP（不是 GitHub Pages）
+howgo.laswi.com.cn {
+	encode zstd gzip
+	reverse_proxy howgo:5210
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+	}
+}

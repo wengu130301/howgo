@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#07C160" />
+<title>HowGo</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- 登录 / 注册 -->
+  <section id="auth-view" class="auth-view hidden">
+    <div class="auth-card">
+      <div class="brand">
+        <div class="brand-mark">HG</div>
+        <div>
+          <h1>HowGo</h1>
+          <p class="brand-sub">安全、克制的即时通讯</p>
+        </div>
+      </div>
+
+      <div id="laswi-panel">
+        <p class="panel-hint">普通用户统一通过 LaswI ID 登录（首次登录自动建号，HowGo 不保存用户密码）。管理员账号不支持此入口。</p>
+        <button class="primary" id="laswi-login-btn" type="button">使用 LaswI ID 登录</button>
+        <p class="form-error" id="laswi-hint"></p>
+        <p class="switch-link"><a href="#" id="to-admin-mode">管理员登录</a></p>
+      </div>
+
+      <form id="auth-form" class="hidden" autocomplete="off">
+        <p class="panel-hint">管理员使用本地账号 + 管理密钥登录，不经过 LaswI ID。</p>
+        <label class="field">
+          <span>HowGo 号</span>
+          <input id="auth-name" type="text" placeholder="管理员账号" maxlength="16" required />
+        </label>
+        <label class="field">
+          <span>密码</span>
+          <input id="auth-password" type="password" placeholder="管理员密码" minlength="8" required />
+        </label>
+
+        <label class="field">
+          <span>管理密钥</span>
+          <input id="auth-adminkey" type="password" placeholder="data/admin-credentials.txt 中的密钥" required />
+        </label>
+
+        <p class="form-error" id="auth-error"></p>
+        <button class="primary" id="auth-submit" type="submit">管理员登录</button>
+        <p class="switch-link"><a href="#" id="to-user-mode">返回普通用户登录</a></p>
+      </form>
+
+      <p class="auth-foot">发送内容由服务端实时审核；违规内容将被拦截或打码，并记入审计日志。</p>
+    </div>
+  </section>
+
+  <!-- 主界面 -->
+  <section id="main-view" class="main-view hidden">
+    <aside class="sidebar">
+      <header class="sidebar-top">
+        <div class="me">
+          <div class="avatar" id="me-avatar">?</div>
+          <div class="me-info">
+            <strong id="me-name">—</strong>
+            <span id="me-id">—</span>
+          </div>
+        </div>
+        <button class="icon-btn" id="logout-btn" title="退出登录">⏻</button>
+      </header>
+
+      <nav class="side-tabs">
+        <button class="side-tab active" data-panel="chats">会话</button>
+        <button class="side-tab" data-panel="contacts">联系人</button>
+        <button class="side-tab admin-only hidden" data-panel="admin">管理台</button>
+      </nav>
+
+      <div class="side-body">
+        <div id="list-chats" class="list"></div>
+        <div id="list-contacts" class="list hidden"></div>
+        <div id="panel-admin" class="admin-nav hidden">
+          <button class="admin-tab active" data-admin="overview">概览</button>
+          <button class="admin-tab" data-admin="messages">消息审查</button>
+          <button class="admin-tab" data-admin="reports">举报处理</button>
+          <button class="admin-tab" data-admin="users">用户管理</button>
+          <button class="admin-tab" data-admin="words">敏感词库</button>
+          <button class="admin-tab" data-admin="audits">审计日志</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <div id="chat-pane" class="chat-pane">
+        <div class="empty-hint" id="chat-empty">选择一个会话开始聊天</div>
+        <div id="chat-box" class="chat-box hidden">
+          <header class="chat-head">
+            <div>
+              <strong id="chat-peer">—</strong>
+              <span id="chat-peer-id" class="chat-peer-id"></span>
+            </div>
+            <span class="tag" id="chat-ban-tag" hidden>对方已被限制</span>
+          </header>
+          <div id="messages" class="messages"></div>
+          <div class="composer">
+            <div class="ban-banner hidden" id="ban-banner">你已被限制发言</div>
+            <div class="composer-row">
+              <textarea id="msg-input" rows="1" placeholder="输入消息…（Enter 发送，Shift+Enter 换行）"></textarea>
+              <button class="primary small" id="send-btn">发送</button>
+            </div>
+            <p class="composer-tip" id="composer-tip">内容经服务端审核后送达</p>
+          </div>
+        </div>
+      </div>
+
+      <div id="admin-pane" class="admin-pane hidden">
+        <header class="admin-head">
+          <h2>HowGo 管理台</h2>
+          <span class="badge">管理员模式</span>
+        </header>
+        <div class="admin-body" id="admin-body"></div>
+      </div>
+    </main>
+  </section>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/app.js"></script>
+  <script src="/admin.js"></script>
+</body>
+</html>

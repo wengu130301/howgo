@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: howgo
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: singapore
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: HOWGO_PUBLIC_URL
+        value: https://howgo.laswi.com.cn
+      - key: HOWGO_ADMIN_KEY
+        generateValue: true
+      - key: LASWI_CLIENT_ID
+        sync: false
+      - key: LASWI_CLIENT_SECRET
+        sync: false
+      - key: LASWI_AUTH_BASE
+        value: https://rtuser.rtstudio.top
