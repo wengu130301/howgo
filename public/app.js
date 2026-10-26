@@ -153,12 +153,18 @@ async function enterApp() {
 
   const isAdmin = state.me.role === 'admin';
   document.querySelectorAll('.admin-only').forEach((n) => n.classList.toggle('hidden', !isAdmin));
-  if (isAdmin) setPanel('admin');
+  // 管理员是审核身份，不参与普通用户的会话/好友模型，隐藏其 IM 入口
+  document.querySelectorAll('.user-only').forEach((n) => n.classList.toggle('hidden', isAdmin));
 
   const me = await api('/api/me').catch(() => null);
   state.banned = !!(me && me.banned);
 
-  await Promise.all([loadChats(), loadContacts()]);
+  if (isAdmin) {
+    setPanel('admin');
+  } else {
+    setPanel('chats');
+    await Promise.all([loadChats(), loadContacts()]);
+  }
   startPolling();
 }
 
@@ -166,11 +172,15 @@ function startPolling() {
   stopPolling();
   state.pollTimer = setInterval(async () => {
     if (!state.me) return;
+    const isAdmin = state.me.role === 'admin';
     try {
+      if (isAdmin) {
+        if (state.panel === 'admin') window.HowGoAdmin.refresh();
+        return;
+      }
       await loadChats(true);
       await loadRequests(true);
       if (state.activeChatId) await loadMessages(true);
-      if (state.panel === 'admin') window.HowGoAdmin.refresh();
     } catch {
       /* 轮询失败静默，下一轮重试 */
     }
@@ -185,6 +195,8 @@ function stopPolling() {
 /* ---------------- 侧栏 ---------------- */
 
 function setPanel(panel) {
+  // 兜底：管理员不存在普通会话/联系人视图，任何调用都回落到管理台
+  if (state.me && state.me.role === 'admin' && panel !== 'admin') panel = 'admin';
   state.panel = panel;
   document.querySelectorAll('.side-tab').forEach((b) => b.classList.toggle('active', b.dataset.panel === panel));
   $('#list-chats').classList.toggle('hidden', panel !== 'chats');
