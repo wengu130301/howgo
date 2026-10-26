@@ -469,8 +469,8 @@ add('GET', '/api/me', async (req, res, body, user) => {
 const RENGINE_LOGIN_BASE = (process.env.LASWI_LOGIN_BASE || 'https://apilogin.rtstudio.top').replace(/\/+$/, '');
 const RENGINE_API_BASE = (process.env.LASWI_API_BASE || 'https://appapi.rtstudio.top').replace(/\/+$/, '');
 const RENGINE_APP_TYPE = String(process.env.LASWI_APP_TYPE || 'name').trim().toLowerCase(); // name | token | loginkey
-// 应用标识写死为 LaswI ID：热土登录页始终以「LaswI ID」的名义请求授权
-const LASWI_APP_NAME = 'LaswI ID';
+// 应用标识写死为 LaswI_ID：热土登录页始终以「LaswI_ID」的名义请求授权
+const LASWI_APP_NAME = 'LaswI_ID';
 const RENGINE_APP_ID = LASWI_APP_NAME; // 仅 name 模式使用；token 模式改用软件 Token 作为标识
 const RENGINE_SOFTWARE_TOKEN = process.env.LASWI_SOFTWARE_TOKEN || '';
 const LASWI_ENABLED =

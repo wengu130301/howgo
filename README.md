@@ -78,7 +78,7 @@ export LASWI_SOFTWARE_TOKEN=      # 仅 token / loginkey 模式必填（64 位�
 export HOWGO_PUBLIC_URL=          # 留空：回调地址自动跟随访问域名（默认）；填值则强制固定
 ```
 
-> 应用标识写死为 `LaswI ID`（常量 `LASWI_APP_NAME`），热土登录页始终以「LaswI ID」名义请求授权，不再随部署环境变化；`name` 模式零申请即可登录。
+> 应用标识写死为 `LaswI_ID`（常量 `LASWI_APP_NAME`），热土登录页始终以「LaswI_ID」名义请求授权，不再随部署环境变化；`name` 模式零申请即可登录。
 > 拿到软件 Token 后把 `LASWI_APP_TYPE` 改为 `loginkey` 并填 `LASWI_SOFTWARE_TOKEN`，即变为已验证软件且 Token 不暴露。
 
 ---
