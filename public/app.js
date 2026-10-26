@@ -8,6 +8,8 @@ const state = {
   banned: false,
   chats: [],
   contacts: [],
+  friends: [],
+  requests: { incoming: [], outgoing: [], pending: 0 },
   activeChatId: null,
   activePeer: null,
   panel: 'chats',
@@ -166,6 +168,7 @@ function startPolling() {
     if (!state.me) return;
     try {
       await loadChats(true);
+      await loadRequests(true);
       if (state.activeChatId) await loadMessages(true);
       if (state.panel === 'admin') window.HowGoAdmin.refresh();
     } catch {
@@ -195,7 +198,10 @@ function setPanel(panel) {
 
 function bindSidebar() {
   document.querySelectorAll('.side-tab').forEach((b) => {
-    b.addEventListener('click', () => setPanel(b.dataset.panel));
+    b.addEventListener('click', () => {
+      setPanel(b.dataset.panel);
+      if (b.dataset.panel === 'contacts') loadContacts().catch(() => null);
+    });
   });
 
   $('#logout-btn').addEventListener('click', async () => {
@@ -255,40 +261,267 @@ function renderChats() {
 async function loadContacts() {
   const r = await api('/api/contacts');
   state.contacts = r.contacts;
-  const box = $('#list-contacts');
-  clear(box);
-  if (!r.contacts.length) {
-    box.appendChild(el('div', { class: 'empty-small', text: '暂无其他用户，可在另一个浏览器窗口注册账号测试' }));
-    return;
+  state.friends = r.contacts.filter((u) => u.relation === 'friend');
+  renderContacts();
+  loadRequests(true);
+}
+
+function relTag(u) {
+  if (u.relation === 'friend') return '';
+  if (u.relation === 'pending_out') return '申请已发送';
+  if (u.relation === 'pending_in') return '待你同意';
+  return '';
+}
+
+function userRow(u, opts) {
+  opts = opts || {};
+  const tag = relTag(u);
+  let action = null;
+  if (opts.mode === 'search' || opts.mode === 'others') {
+    if (u.relation === 'friend') {
+      action = el('button', { class: 'btn-mini', text: '聊天', on: { click: (e) => { e.stopPropagation(); startChat(u); } } });
+    } else if (u.relation === 'pending_in') {
+      action = el('button', { class: 'btn-mini primary', text: '去同意', on: { click: (e) => { e.stopPropagation(); showRequests(true); } } });
+    } else if (u.relation === 'pending_out') {
+      action = el('button', { class: 'btn-mini', text: '已申请', attrs: { disabled: 'disabled' } });
+    } else {
+      action = el('button', { class: 'btn-mini primary', text: '加好友', on: { click: (e) => { e.stopPropagation(); addFriend(u); } } });
+    }
+  } else if (u.relation === 'friend') {
+    action = el(
+      'span',
+      { class: 'row-actions' },
+      el('button', { class: 'btn-mini', text: '分组', on: { click: (e) => { e.stopPropagation(); editGroup(u); } } }),
+      el('button', { class: 'btn-mini', text: '删除', on: { click: (e) => { e.stopPropagation(); removeFriend(u); } } })
+    );
   }
-  r.contacts.forEach((u) => {
+
+  return el(
+    'div',
+    {
+      class: 'item friend-row',
+      on: { click: () => (u.relation === 'friend' ? startChat(u) : addFriend(u)) }
+    },
+    el('div', { class: 'avatar', text: initial(u.name) }),
+    el(
+      'div',
+      { class: 'item-main' },
+      el('div', { class: 'item-title' }, el('strong', { text: u.name + (u.banned ? '（已限制）' : '') })),
+      el('div', { class: 'item-sub', text: 'HowGo 号 ' + u.id + (tag ? ' · ' + tag : '') })
+    ),
+    action
+  );
+}
+
+function renderContacts() {
+  const box = $('#contact-list');
+  if (!box) return;
+  clear(box);
+
+  const friends = state.contacts.filter((u) => u.relation === 'friend');
+  const others = state.contacts.filter((u) => u.relation !== 'friend');
+
+  if (!friends.length) {
+    box.appendChild(el('div', { class: 'group-title', text: '好友 0' }));
+    box.appendChild(el('div', { class: 'empty-small', text: '还没有好友，用上方搜索或从下方添加' }));
+  } else {
+    const groups = [];
+    friends.forEach((u) => {
+      const g = u.group || '我的好友';
+      let bucket = groups.find((x) => x.name === g);
+      if (!bucket) groups.push((bucket = { name: g, users: [] }));
+      bucket.users.push(u);
+    });
+    groups.sort((a, b) => (a.name === '我的好友' ? -1 : b.name === '我的好友' ? 1 : a.name.localeCompare(b.name, 'zh')));
+    groups.forEach((g) => {
+      box.appendChild(el('div', { class: 'group-title', text: g.name + ' ' + g.users.length }));
+      g.users.forEach((u) => box.appendChild(userRow(u, { mode: 'friends' })));
+    });
+  }
+
+  if (others.length) {
+    box.appendChild(el('div', { class: 'group-title', text: '其他用户 ' + others.length }));
+    others.forEach((u) => box.appendChild(userRow(u, { mode: 'others' })));
+  }
+}
+
+async function editGroup(u) {
+  const next = window.prompt('把「' + u.name + '」移到哪个分组？（留空则回到「我的好友」）', u.group || '我的好友');
+  if (next === null) return;
+  const group = next.trim().slice(0, 12);
+  try {
+    await api('/api/friends/group', { method: 'POST', body: { userId: u.id, group } });
+    toast('已移动到「' + (group || '我的好友') + '」');
+    await loadContacts();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function startChat(u) {
+  try {
+    const cr = await api('/api/chats', { method: 'POST', body: { peerId: u.id } });
+    await loadChats(true);
+    openChat(cr.chat.id, u);
+    setPanel('chats');
+  } catch (e) {
+    if (e.data && e.data.code === 'not_friend') {
+      toast('你们还不是好友，先发送好友申请', true);
+    } else {
+      toast(e.message, true);
+    }
+  }
+}
+
+async function addFriend(u) {
+  try {
+    await api('/api/friends/requests', { method: 'POST', body: { toUserId: u.id } });
+    toast('好友申请已发送给 ' + u.name);
+    await loadContacts();
+    doSearch($('#friend-search').value.trim());
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function removeFriend(u) {
+  if (!window.confirm('确定把「' + u.name + '」从好友中删除？删除后无法再互相发消息。')) return;
+  try {
+    await api('/api/friends/remove', { method: 'POST', body: { userId: u.id } });
+    toast('已删除好友');
+    await loadContacts();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+/* ---------------- 好友申请 ---------------- */
+
+async function loadRequests(silent) {
+  try {
+    const r = await api('/api/friends/requests');
+    state.requests = r;
+    const badge = $('#req-count');
+    const toggle = $('#req-toggle');
+    if (badge) badge.textContent = r.pending > 99 ? '99+' : String(r.pending);
+    if (toggle) toggle.classList.toggle('hidden', r.pending + r.outgoing.length === 0);
+    if (!silent && !$('#req-panel').classList.contains('hidden')) renderRequests();
+  } catch {
+    /* 轮询失败静默 */
+  }
+}
+
+function renderRequests() {
+  const box = $('#req-panel');
+  if (!box) return;
+  clear(box);
+  const inc = state.requests.incoming || [];
+  const out = state.requests.outgoing || [];
+
+  box.appendChild(el('div', { class: 'group-title', text: '收到的申请 ' + inc.length }));
+  if (!inc.length) box.appendChild(el('div', { class: 'empty-small', text: '暂无新的好友申请' }));
+  inc.forEach((r) => {
     box.appendChild(
       el(
         'div',
-        {
-          class: 'item',
-          on: {
-            click: async () => {
-              try {
-                const cr = await api('/api/chats', { method: 'POST', body: { peerId: u.id } });
-                await loadChats(true);
-                openChat(cr.chat.id, u);
-                setPanel('chats');
-              } catch (e) {
-                toast(e.message, true);
-              }
-            }
-          }
-        },
-        el('div', { class: 'avatar', text: initial(u.name) }),
+        { class: 'item friend-row' },
+        el('div', { class: 'avatar', text: initial(r.user.name) }),
         el(
           'div',
           { class: 'item-main' },
-          el('div', { class: 'item-title' }, el('strong', { text: u.name })),
-          el('div', { class: 'item-sub', text: 'HowGo 号 ' + u.id })
-        )
+          el('div', { class: 'item-title' }, el('strong', { text: r.user.name })),
+          el('div', { class: 'item-sub', text: r.message ? '留言：' + r.message : 'HowGo 号 ' + r.user.id })
+        ),
+        el('button', { class: 'btn-mini primary', text: '同意', on: { click: () => handleRequest(r.id, true) } }),
+        el('button', { class: 'btn-mini', text: '拒绝', on: { click: () => handleRequest(r.id, false) } })
       )
     );
+  });
+
+  if (out.length) {
+    box.appendChild(el('div', { class: 'group-title', text: '我发出的 ' + out.length }));
+    out.forEach((r) => {
+      box.appendChild(
+        el(
+          'div',
+          { class: 'item friend-row' },
+          el('div', { class: 'avatar', text: initial(r.user.name) }),
+          el(
+            'div',
+            { class: 'item-main' },
+            el('div', { class: 'item-title' }, el('strong', { text: r.user.name })),
+            el('div', { class: 'item-sub', text: '等待对方处理' })
+          )
+        )
+      );
+    });
+  }
+}
+
+async function handleRequest(id, accept) {
+  try {
+    await api('/api/friends/requests/' + id + '/' + (accept ? 'accept' : 'reject'), { method: 'POST' });
+    toast(accept ? '已添加为好友' : '已拒绝该申请');
+    await Promise.all([loadContacts(), loadRequests(false)]);
+    renderRequests();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function showRequests(force) {
+  setPanel('contacts');
+  const panel = $('#req-panel');
+  panel.classList.remove('hidden');
+  renderRequests();
+  if (force) {
+    $('#friend-search').value = '';
+    doSearch('');
+  }
+}
+
+/* ---------------- 用户搜索 ---------------- */
+
+let searchTimer = null;
+
+async function doSearch(q) {
+  const box = $('#search-results');
+  const list = $('#contact-list');
+  if (!q) {
+    box.classList.add('hidden');
+    box.replaceChildren();
+    list.classList.remove('hidden');
+    return;
+  }
+  list.classList.add('hidden');
+  try {
+    const r = await api('/api/users/search?q=' + encodeURIComponent(q));
+    clear(box);
+    box.classList.remove('hidden');
+    if (!r.users.length) {
+      box.appendChild(el('div', { class: 'empty-small', text: '没有匹配的用户' }));
+      return;
+    }
+    const title = el('div', { class: 'group-title', text: '搜索结果 ' + r.users.length });
+    box.appendChild(title);
+    r.users.forEach((u) => box.appendChild(userRow(u, { mode: 'search' })));
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function bindFriendTools() {
+  const input = $('#friend-search');
+  if (!input) return;
+  input.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    const q = input.value.trim();
+    searchTimer = setTimeout(() => doSearch(q), 250);
+  });
+  $('#req-toggle').addEventListener('click', () => {
+    const panel = $('#req-panel');
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) renderRequests();
   });
 }
 
@@ -454,6 +687,9 @@ async function sendMessage() {
     input.value = text;
     if (e.status === 451) {
       toast('发送被拦截：' + e.message, true);
+    } else if (e.status === 403 && e.data && e.data.code === 'not_friend') {
+      toast('你们还不是好友，无法发送消息', true);
+      loadContacts();
     } else if (e.status === 403) {
       state.banned = true;
       toast(e.message, true);
@@ -482,6 +718,7 @@ async function boot() {
   bindAuth();
   bindSidebar();
   bindComposer();
+  bindFriendTools();
   setAuthMode('laswi');
 
   // 普通用户统一走 LaswI ID：后端未配置凭据时给出明确提示，不做假登录

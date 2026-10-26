@@ -38,18 +38,43 @@ const DEFAULT_MASK = [
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
+const DEFAULT_FRIEND_GROUP = '我的好友';
+
 function freshDb() {
   return {
     version: 1,
     users: [],
     chats: [],
+    friends: [],        // [{ a, b, createdAt }]，a < b，双向即一条记录
+    friendRequests: [], // [{ id, from, to, message, status, createdAt, handledAt }]
     messages: [],
     reports: [],
     audits: [],
     reads: {},          // reads[uid][chatId] = ISO 时间
     words: { block: [...DEFAULT_BLOCK], mask: [...DEFAULT_MASK] },
-    seq: { userId: 10000, msgId: 1, chatId: 1, reportId: 1, auditId: 1 }
+    seq: { userId: 10000, msgId: 1, chatId: 1, reportId: 1, auditId: 1, friendReqId: 1 }
   };
+}
+
+// 老库迁移：补齐新增字段，避免读到 undefined 导致接口 500
+function normalizeDb(raw) {
+  const d = raw && raw.users ? raw : freshDb();
+  const base = freshDb();
+  for (const k of ['chats', 'messages', 'reports', 'audits']) {
+    if (!Array.isArray(d[k])) d[k] = [];
+  }
+  if (!Array.isArray(d.friends)) d.friends = [];
+  if (!Array.isArray(d.friendRequests)) d.friendRequests = [];
+  d.friends.forEach((f, i) => {
+    if (!f.id) f.id = i + 1;
+    if (!f.groupA) f.groupA = DEFAULT_FRIEND_GROUP;
+    if (!f.groupB) f.groupB = DEFAULT_FRIEND_GROUP;
+    if (!f.createdAt) f.createdAt = nowIso();
+  });
+  if (!d.reads || typeof d.reads !== 'object') d.reads = {};
+  if (!d.words || typeof d.words !== 'object') d.words = base.words;
+  d.seq = Object.assign({}, base.seq, d.seq || {});
+  return d;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,8 +121,7 @@ async function loadFromCloud() {
   if (!res.ok) throw new Error('读取云端失败 HTTP ' + res.status + ' ' + (await res.text()));
   const rows = await res.json();
   if (Array.isArray(rows) && rows.length && rows[0].value) {
-    db = rows[0].value;
-    if (!db.users) db = freshDb();
+    db = normalizeDb(rows[0].value);
   } else {
     await persistNow(); // 首次部署：写入初始库
   }
@@ -118,7 +142,7 @@ if (!CLOUD) {
   if (!fs.existsSync(DB_FILE)) {
     fs.writeFileSync(DB_FILE, JSON.stringify(freshDb(), null, 2), 'utf8');
   }
-  db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+  db = normalizeDb(JSON.parse(fs.readFileSync(DB_FILE, 'utf8')));
 }
 
 let saveTimer = null;
@@ -700,16 +724,171 @@ const laswiCallback = async (req, res) => {
 
 add('GET', '/api/auth/laswi/callback', laswiCallback, { public: true });
 
+// ---- 好友关系 ----
+function friendGroup(meId, otherId) {
+  const [x, y] = meId < otherId ? [meId, otherId] : [otherId, meId];
+  const f = db.friends.find((r) => r.a === x && r.b === y);
+  if (!f) return '';
+  return meId === f.a ? f.groupA || DEFAULT_FRIEND_GROUP : f.groupB || DEFAULT_FRIEND_GROUP;
+}
+
+function areFriends(a, b) {
+  const [x, y] = a < b ? [a, b] : [b, a];
+  return db.friends.some((f) => f.a === x && f.b === y);
+}
+
+function relationOf(meId, otherId) {
+  if (areFriends(meId, otherId)) return 'friend';
+  if (db.friendRequests.some((r) => r.status === 'pending' && r.from === meId && r.to === otherId)) return 'pending_out';
+  if (db.friendRequests.some((r) => r.status === 'pending' && r.from === otherId && r.to === meId)) return 'pending_in';
+  return 'none';
+}
+
+function publicUser(u, meId) {
+  return {
+    id: u.id,
+    name: u.name,
+    banned: isBanned(u),
+    laswiId: u.laswiId || '',
+    avatar: u.avatar || '',
+    relation: meId ? relationOf(meId, u.id) : 'none',
+    group: meId ? friendGroup(meId, u.id) : ''
+  };
+}
+
+add('GET', '/api/friends', async (req, res, body, user) => {
+  const list = db.friends
+    .filter((f) => f.a === user.id || f.b === user.id)
+    .map((f) => {
+      const otherId = f.a === user.id ? f.b : f.a;
+      const u = db.users.find((x) => x.id === otherId);
+      return u ? Object.assign(publicUser(u, user.id), { since: f.createdAt }) : null;
+    })
+    .filter(Boolean);
+  json(res, 200, { friends: list });
+});
+
+add('GET', '/api/friends/requests', async (req, res, body, user) => {
+  const brief = (r) => {
+    const u = db.users.find((x) => x.id === (r.from === user.id ? r.to : r.from));
+    return {
+      id: r.id,
+      from: r.from,
+      to: r.to,
+      message: r.message || '',
+      status: r.status,
+      createdAt: r.createdAt,
+      user: u ? { id: u.id, name: u.name, laswiId: u.laswiId || '' } : { id: 0, name: '已注销用户' }
+    };
+  };
+  const incoming = db.friendRequests.filter((r) => r.to === user.id && r.status === 'pending').map(brief);
+  const outgoing = db.friendRequests.filter((r) => r.from === user.id && r.status === 'pending').map(brief);
+  json(res, 200, { incoming, outgoing, pending: incoming.length });
+});
+
+// 搜索用户：HowGo 号精确匹配 + 昵称 / LaswI ID 模糊匹配
+add('GET', '/api/users/search', async (req, res, body, user) => {
+  const q = String(req.searchParams.get('q') || '').trim().toLowerCase();
+  if (!q) return json(res, 200, { users: [] });
+  const list = db.users
+    .filter((u) => u.role === 'user' && u.id !== user.id)
+    .filter((u) => {
+      if (String(u.id) === q) return true;
+      if (u.name.toLowerCase().includes(q)) return true;
+      if ((u.laswiId || '').toLowerCase().includes(q)) return true;
+      return false;
+    })
+    .slice(0, 20)
+    .map((u) => publicUser(u, user.id));
+  json(res, 200, { users: list });
+});
+
+add('POST', '/api/friends/requests', async (req, res, body, user) => {
+  const toId = Number(body.toUserId);
+  const message = String(body.message || '').trim().slice(0, 100);
+  if (!toId) return json(res, 400, { error: '缺少 toUserId' });
+  if (toId === user.id) return json(res, 400, { error: '不能添加自己为好友' });
+  const target = db.users.find((u) => u.id === toId);
+  if (!target || target.role !== 'user') return json(res, 404, { error: '用户不存在' });
+  if (areFriends(user.id, toId)) return json(res, 409, { error: '你们已经是好友了' });
+  const rel = relationOf(user.id, toId);
+  if (rel === 'pending_out') return json(res, 409, { error: '申请已发送，等待对方处理' });
+  if (rel === 'pending_in') return json(res, 409, { error: '对方已向你发送好友申请，请到「好友申请」中同意' });
+
+  const row = {
+    id: db.seq.friendReqId++,
+    from: user.id,
+    to: toId,
+    message,
+    status: 'pending',
+    createdAt: nowIso(),
+    handledAt: null
+  };
+  db.friendRequests.push(row);
+  persist();
+  audit(user.id, 'friend-request', 'user:' + toId, '发送好友申请');
+  json(res, 200, { request: { id: row.id, status: 'pending' } });
+});
+
+add('POST', /^\/api\/friends\/requests\/(\d+)\/(accept|reject)$/, async (req, res, body, user, params) => {
+  const id = Number(params[0]);
+  const action = params[1];
+  const row = db.friendRequests.find((r) => r.id === id);
+  if (!row || row.to !== user.id) return json(res, 404, { error: '申请不存在' });
+  if (row.status !== 'pending') return json(res, 409, { error: '该申请已处理' });
+
+  row.status = action === 'accept' ? 'accepted' : 'rejected';
+  row.handledAt = nowIso();
+
+  if (row.status === 'accepted' && !areFriends(row.from, row.to)) {
+    const [x, y] = row.from < row.to ? [row.from, row.to] : [row.to, row.from];
+    db.friends.push({
+      id: db.friends.length + 1,
+      a: x,
+      b: y,
+      groupA: DEFAULT_FRIEND_GROUP,
+      groupB: DEFAULT_FRIEND_GROUP,
+      createdAt: nowIso()
+    });
+    audit(user.id, 'friend-accept', 'user:' + row.from, '同意好友申请');
+  } else if (row.status === 'rejected') {
+    audit(user.id, 'friend-reject', 'user:' + row.from, '拒绝好友申请');
+  }
+  persist();
+  json(res, 200, { ok: true, status: row.status });
+});
+
+add('POST', '/api/friends/group', async (req, res, body, user) => {
+  const otherId = Number(body.userId);
+  const group = String(body.group || '').trim().slice(0, 12) || DEFAULT_FRIEND_GROUP;
+  if (!otherId) return json(res, 400, { error: '缺少 userId' });
+  if (!areFriends(user.id, otherId)) return json(res, 404, { error: '你们还不是好友' });
+  const [x, y] = user.id < otherId ? [user.id, otherId] : [otherId, user.id];
+  const f = db.friends.find((r) => r.a === x && r.b === y);
+  if (user.id === f.a) f.groupA = group;
+  else f.groupB = group;
+  persist();
+  json(res, 200, { ok: true, group });
+});
+
+add('POST', '/api/friends/remove', async (req, res, body, user) => {
+  const otherId = Number(body.userId);
+  if (!otherId) return json(res, 400, { error: '缺少 userId' });
+  const [x, y] = user.id < otherId ? [user.id, otherId] : [otherId, user.id];
+  const before = db.friends.length;
+  db.friends = db.friends.filter((f) => !(f.a === x && f.b === y));
+  if (db.friends.length === before) return json(res, 404, { error: '你们还不是好友' });
+  persist();
+  audit(user.id, 'friend-remove', 'user:' + otherId, '删除好友');
+  json(res, 200, { ok: true });
+});
+
 // ---- 联系人 / 会话 ----
 add('GET', '/api/contacts', async (req, res, body, user) => {
   const list = db.users
     .filter((u) => u.role === 'user' && u.id !== user.id)
-    .map((u) => ({
-      id: u.id,
-      name: u.name,
-      banned: isBanned(u),
-      online: false
-    }));
+    .map((u) => publicUser(u, user.id));
+  list.sort((a, b) => (a.relation === 'friend' ? 0 : 1) - (b.relation === 'friend' ? 0 : 1) || a.id - b.id);
   json(res, 200, { contacts: list });
 });
 
@@ -718,6 +897,9 @@ add('POST', '/api/chats', async (req, res, body, user) => {
   if (!peerId) return json(res, 400, { error: '缺少 peerId' });
   const peer = db.users.find((u) => u.id === peerId);
   if (!peer) return json(res, 404, { error: '对方不存在' });
+  if (!areFriends(user.id, peerId)) {
+    return json(res, 403, { error: '请先添加对方为好友', code: 'not_friend' });
+  }
   let chat = db.chats.find(
     (c) => c.members.length === 2 && c.members.includes(user.id) && c.members.includes(peerId)
   );
@@ -783,6 +965,10 @@ add('POST', /^\/api\/chats\/([^/]+)\/read$/, async (req, res, body, user, params
 add('POST', /^\/api\/chats\/([^/]+)\/messages$/, async (req, res, body, user, params) => {
   const chat = chatOf(params[0]);
   if (!chat || !chat.members.includes(user.id)) return json(res, 404, { error: '会话不存在' });
+  const peerId = chat.members.find((x) => x !== user.id);
+  if (!areFriends(user.id, peerId)) {
+    return json(res, 403, { error: '你们还不是好友，无法发送消息（请先添加对方为好友）', code: 'not_friend' });
+  }
   if (isBanned(user)) {
     return json(res, 403, {
       error: '你已被限制发言',

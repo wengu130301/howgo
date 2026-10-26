@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
 <meta name="theme-color" content="#07C160" />
 <title>HowGo</title>
-<link rel="stylesheet" href="/style.css" />
+<link rel="stylesheet" href="/style.css?v=20261027a" />
 </head>
 <body>
   <!-- 登录 / 注册 -->
@@ -73,7 +73,15 @@
 
       <div class="side-body">
         <div id="list-chats" class="list"></div>
-        <div id="list-contacts" class="list hidden"></div>
+        <div id="list-contacts" class="list hidden">
+          <div class="friend-tools">
+            <input id="friend-search" type="search" placeholder="搜索昵称 / HowGo 号 / LaswI ID" autocomplete="off">
+            <button id="req-toggle" class="req-toggle hidden">好友申请 <b id="req-count">0</b></button>
+          </div>
+          <div id="req-panel" class="req-panel hidden"></div>
+          <div id="search-results" class="search-results hidden"></div>
+          <div id="contact-list"></div>
+        </div>
         <div id="panel-admin" class="admin-nav hidden">
           <button class="admin-tab active" data-admin="overview">概览</button>
           <button class="admin-tab" data-admin="messages">消息审查</button>
@@ -119,7 +127,7 @@
   </section>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20261027a"></script>
   <script src="/admin.js"></script>
 </body>
 </html>
