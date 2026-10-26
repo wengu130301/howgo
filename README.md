@@ -53,7 +53,7 @@ GET /api/auth/laswi/start
         参数：port=回调地址 & type=name|token|loginkey & v=标识 & state & env=web & TE=true
         （loginkey 模式先服务端 GET appapi/login-token 换 10 分钟登录 Key，软件 Token 不进 URL）
         ↓ 用户在热土登录页完成登录
-GET /api/auth/laswi/callback?type=code&v=AUTH_CODE&state=...
+GET /?type=code&v=AUTH_CODE&state=...   （热土 web 模式回调固定落在根路径，服务端同时兼容 /api/auth/laswi/callback）
         1) 校验 state（10 分钟有效，一次性）
         2) 服务端 POST {API}/exchange {code} → 用户 access_token   ← 前端看不到
         3) 服务端 POST {API}/get-user-by-token {token} → 用户资料   ← 只取 id/昵称/头像
@@ -139,7 +139,7 @@ export HOWGO_PUBLIC_URL=          # 留空：回调地址自动跟随访问域�
 | GET | `/api/me` | 当前用户（无 token 字段） |
 | GET | `/api/auth/methods` | 登录方式声明（`laswi` / `password:false` / `adminPassword:true`） |
 | GET | `/api/auth/laswi/start` | 发起 LaswI 授权 |
-| GET | `/api/auth/laswi/callback` | 授权回调（服务端换 token → 建本地会话） |
+| GET | `/?type=..&v=..&state=..`（兼容 `/api/auth/laswi/callback`） | 授权回调（服务端换 token → 建本地会话）；`start` 传入的 port 必须是纯主机名，热土会自行拼 `https://` |
 | GET | `/api/contacts` | 联系人列表 |
 | POST | `/api/chats` | 建/取单聊 |
 | GET | `/api/chats` | 会话列表（含未读数） |

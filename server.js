@@ -489,6 +489,14 @@ function publicBase(req) {
   return proto + '://' + host;
 }
 
+// 热土 web 模式会把 port 当纯主机名再拼 https://，因此只能传 host（不能带协议与路径）
+function publicHost(req) {
+  if (process.env.HOWGO_PUBLIC_URL) return new URL(process.env.HOWGO_PUBLIC_URL).host;
+  return String(req.headers['x-forwarded-host'] || req.headers.host || '127.0.0.1:' + PORT)
+    .split(',')[0]
+    .trim();
+}
+
 function redirect(res, location) {
   const headers = { location, 'cache-control': 'no-store' };
   const cookie = res.getHeader('set-cookie');
@@ -581,9 +589,10 @@ add('GET', '/api/auth/laswi/start', async (req, res) => {
     }
   }
 
-  // Web 应用：port 传完整回调地址；TE=true 走授权码交换模式，用户 Token 不经过浏览器
+  // Web 应用：port 只能传纯主机名（热土会自己补 https:// 并拼 /?type=...），
+  // 传完整 URL 会被拼成 https://https://...，报「找不到服务器 https」。回调落在根路径。
   const u = new URL(RENGINE_LOGIN_BASE + '/');
-  u.searchParams.set('port', publicBase(req) + '/api/auth/laswi/callback');
+  u.searchParams.set('port', publicHost(req));
   u.searchParams.set('type', appType);
   u.searchParams.set('v', appValue);
   u.searchParams.set('state', state);
@@ -592,7 +601,7 @@ add('GET', '/api/auth/laswi/start', async (req, res) => {
   redirect(res, u.toString());
 }, { public: true });
 
-add('GET', '/api/auth/laswi/callback', async (req, res) => {
+const laswiCallback = async (req, res) => {
   const fail = (msg) => redirect(res, '/?login_error=' + encodeURIComponent(msg));
   if (!LASWI_ENABLED) return fail('LaswI ID 登录未配置');
 
@@ -687,7 +696,9 @@ add('GET', '/api/auth/laswi/callback', async (req, res) => {
   if (sess) sess.laswiToken = accessToken; // 仅服务端可见，不下发前端
   audit(user.id, 'laswi-login', 'laswi:' + laswiId, 'LaswI ID 登录成功');
   redirect(res, '/');
-}, { public: true });
+};
+
+add('GET', '/api/auth/laswi/callback', laswiCallback, { public: true });
 
 // ---- 联系人 / 会话 ----
 add('GET', '/api/contacts', async (req, res, body, user) => {
@@ -1108,6 +1119,15 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' });
     return res.end(JSON.stringify({ error: '数据服务暂时不可用，请稍后重试' }));
+  }
+
+  // 热土 web 模式回调固定落在根路径（https://<host>/?type=..&v=..&state=..），此处分流给回调处理
+  if (pathname === '/' || pathname === '/index.html') {
+    if (url.searchParams.has('state') && url.searchParams.has('type')) {
+      req.searchParams = url.searchParams;
+      console.log('[howgo] laswi-callback-root 到达 path=' + pathname);
+      return laswiCallback(req, res);
+    }
   }
 
   if (!pathname.startsWith('/api/')) return serveStatic(req, res);
