@@ -26,11 +26,9 @@ services:
         value: https://apilogin.rtstudio.top
       - key: LASWI_API_BASE
         value: https://appapi.rtstudio.top
-      # name=未验证软件直接用软件名；token=已验证软件填 64 位软件 Token；loginkey=软件 Token 换临时 Key（推荐）
+      # name=未验证软件（应用标识写死为 LaswI ID）；token/loginkey=已验证软件，需填 64 位软件 Token
       - key: LASWI_APP_TYPE
         value: name
-      - key: LASWI_APP_ID
-        value: HowGo
-      # 仅 loginkey 模式需要：在 Render 控制台填软件 Token，并把 LASWI_APP_TYPE 改为 loginkey
+      # 仅 token / loginkey 模式需要
       - key: LASWI_SOFTWARE_TOKEN
         sync: false

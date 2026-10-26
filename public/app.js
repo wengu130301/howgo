@@ -111,7 +111,7 @@ function bindAuth() {
 
   $('#laswi-login-btn').addEventListener('click', () => {
     if (!state.laswiEnabled) {
-      $('#laswi-hint').textContent = 'LaswI ID 登录未配置，请联系管理员在服务端设置 LASWI_CLIENT_ID / LASWI_CLIENT_SECRET。';
+      $('#laswi-hint').textContent = 'LaswI ID 登录暂不可用，请联系管理员检查热土引擎（REngine）相关配置。';
       return;
     }
     window.location.href = '/api/auth/laswi/start';

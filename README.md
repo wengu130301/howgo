@@ -74,12 +74,12 @@ GET /api/auth/laswi/callback?type=code&v=AUTH_CODE&state=...
 export LASWI_LOGIN_BASE=https://apilogin.rtstudio.top   # 默认值，热土登录页
 export LASWI_API_BASE=https://appapi.rtstudio.top       # 默认值，热土 API 网关
 export LASWI_APP_TYPE=name        # name=未验证软件；token=已验证(填软件Token)；loginkey=软件Token换临时Key（推荐）
-export LASWI_APP_ID=HowGo         # name 模式填软件名；token 模式填 64 位软件 Token
-export LASWI_SOFTWARE_TOKEN=      # 仅 loginkey 模式必填（软件 Token），服务端换 Key，不进 URL
-export HOWGO_PUBLIC_URL=https://howgo.example.com       # 反代后必须显式指定，否则回调地址会错
+export LASWI_SOFTWARE_TOKEN=      # 仅 token / loginkey 模式必填（64 位软件 Token）
+export HOWGO_PUBLIC_URL=          # 留空：回调地址自动跟随访问域名（默认）；填值则强制固定
 ```
 
-> `name` 模式零申请即可登录，但热土登录页会标注「未验证软件」风险提示；拿到软件 Token 后把 `LASWI_APP_TYPE` 改为 `loginkey` 并填 `LASWI_SOFTWARE_TOKEN`，即变为已验证软件且 Token 不暴露。
+> 应用标识写死为 `LaswI ID`（常量 `LASWI_APP_NAME`），热土登录页始终以「LaswI ID」名义请求授权，不再随部署环境变化；`name` 模式零申请即可登录。
+> 拿到软件 Token 后把 `LASWI_APP_TYPE` 改为 `loginkey` 并填 `LASWI_SOFTWARE_TOKEN`，即变为已验证软件且 Token 不暴露。
 
 ---
 
