@@ -599,6 +599,12 @@ add('GET', '/api/auth/laswi/callback', async (req, res) => {
   const state = req.searchParams.get('state') || '';
   const cbType = String(req.searchParams.get('type') || '').toLowerCase();
   const cbValue = req.searchParams.get('v') || '';
+  console.log(
+    '[howgo] laswi-callback 到达 path=' + (req.url || '').split('?')[0] +
+    ' state=' + (state ? state.slice(0, 8) + '…' : '无') +
+    ' type=' + (cbType || '无') +
+    ' v长度=' + cbValue.length
+  );
   if (!state || !laswiStates.has(state)) return fail('登录状态校验失败，请重新登录');
   laswiStates.delete(state);
   if (cbType === 'error') return fail('LaswI 授权失败：' + (cbValue || '用户取消或平台拒绝'));
@@ -1126,6 +1132,7 @@ const server = http.createServer(async (req, res) => {
       await r.handler(req, res, body, user, params || []);
       return;
     }
+    console.warn('[howgo] 404', req.method, pathname, url.search.slice(0, 120));
     json(res, 404, { error: '接口不存在' });
   } catch (e) {
     console.error('[howgo]', req.method, pathname, e);
