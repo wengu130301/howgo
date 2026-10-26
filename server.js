@@ -1093,7 +1093,9 @@ function serveStatic(req, res) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
-  const pathname = url.pathname;
+  // 去掉尾部斜杠再匹配路由：热土登录页会把 port 规范成目录形式，
+  // 回调可能变成 /api/auth/laswi/callback/?type=code…，否则会 404
+  const pathname = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, '') || '/' : url.pathname;
 
   try {
     await ensureLoaded();
