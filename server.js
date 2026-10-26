@@ -283,18 +283,6 @@ function moderate(rawText, user) {
 const sessions = new Map(); // token -> { uid, exp, role }
 const SESSION_TTL = 7 * 24 * 3600 * 1000;
 
-function publicUser(u) {
-  return {
-    id: u.id,
-    name: u.name,
-    role: u.role,
-    createdAt: u.createdAt,
-    provider: u.provider || 'password',
-    bannedUntil: u.bannedUntil || null,
-    bannedReason: u.bannedReason || null
-  };
-}
-
 function isBanned(u) {
   return !!(u.bannedUntil && new Date(u.bannedUntil).getTime() > Date.now());
 }
@@ -745,7 +733,7 @@ function relationOf(meId, otherId) {
 }
 
 function publicUser(u, meId) {
-  return {
+  const out = {
     id: u.id,
     name: u.name,
     banned: isBanned(u),
@@ -754,6 +742,9 @@ function publicUser(u, meId) {
     relation: meId ? relationOf(meId, u.id) : 'none',
     group: meId ? friendGroup(meId, u.id) : ''
   };
+  // role 只在「本人」上下文中返回：登录、/api/me、未指定 meId 时都视为本人
+  if (meId === undefined || meId === u.id) out.role = u.role;
+  return out;
 }
 
 add('GET', '/api/friends', async (req, res, body, user) => {
