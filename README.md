@@ -65,7 +65,7 @@ GET /api/auth/laswi/callback?type=code&v=AUTH_CODE&state=...
 
 - **令牌不入前端**：`access_token` 只存在 `sessions` 的内存副本里，任何 `/api/me` 响应都不含 token；Cookie 为 `HttpOnly; SameSite=Lax`。
 - **platform 侧不跨域**：/exchange 与 /get-user-by-token 均为服务端到服务端调用，浏览器不接触平台接口，天然不受同源策略约束。
-- **不编造凭据**：未配置软件标识（`name/token` 模式的 `LASWI_APP_ID`，或 `loginkey` 模式的 `LASWI_SOFTWARE_TOKEN`）时，`/api/auth/methods` 返回 `laswi:false`，前端按钮置灰并显式提示「LaswI ID 登录暂未配置」，绝不出现假登录。
+- **不编造凭据**：未配置软件标识（`token` / `loginkey` 模式的 `LASWI_SOFTWARE_TOKEN`；`name` 模式用写死的 `LaswI_ID`）时，`/api/auth/methods` 返回 `laswi:false`，前端按钮置灰并显式提示「LaswI ID 登录暂未配置」，绝不出现假登录。
 - **管理员排除**：回调里若 `laswiId` 已绑定 `role=admin` 的账号，直接 302 回 `/?login_error=管理员账号不支持 LaswI ID 登录…`，不下发会话，并写审计 `laswi-login-denied`。
 
 ### 配置
@@ -73,13 +73,14 @@ GET /api/auth/laswi/callback?type=code&v=AUTH_CODE&state=...
 ```bash
 export LASWI_LOGIN_BASE=https://apilogin.rtstudio.top   # 默认值，热土登录页
 export LASWI_API_BASE=https://appapi.rtstudio.top       # 默认值，热土 API 网关
-export LASWI_APP_TYPE=name        # name=未验证软件；token=已验证(填软件Token)；loginkey=软件Token换临时Key（推荐）
-export LASWI_SOFTWARE_TOKEN=      # 仅 token / loginkey 模式必填（64 位软件 Token）
+export LASWI_APP_TYPE=loginkey   # 当前线上：已验证软件，软件Token换10分钟登录Key（Token不进URL）；name=未验证；token=Token直传
+export LASWI_SOFTWARE_TOKEN=      # 仅 token / loginkey 模式必填（64 位软件 Token，机密，只配在平台面板）
 export HOWGO_PUBLIC_URL=          # 留空：回调地址自动跟随访问域名（默认）；填值则强制固定
 ```
 
-> 应用标识写死为 `LaswI_ID`（常量 `LASWI_APP_NAME`），热土登录页始终以「LaswI_ID」名义请求授权，不再随部署环境变化；`name` 模式零申请即可登录。
-> 拿到软件 Token 后把 `LASWI_APP_TYPE` 改为 `loginkey` 并填 `LASWI_SOFTWARE_TOKEN`，即变为已验证软件且 Token 不暴露。
+> `name` 模式下应用标识写死为 `LaswI_ID`（常量 `LASWI_APP_NAME`），热土登录页以「LaswI_ID」名义请求授权，零申请即可登录。
+> 线上已切到 `loginkey`：`LASWI_APP_TYPE=loginkey` + `LASWI_SOFTWARE_TOKEN=<软件Token>`，登录跳转里 `v` 是每次现换的登录 Key，软件 Token 不出现在 URL / 日志 / 前端。
+> 注意：`render.yaml` 里这两项都是 `sync: false`，值只在 Render 面板维护；若在 blueprint 里写死 `value: name`，每次部署会把模式重置回未验证。
 
 ---
 

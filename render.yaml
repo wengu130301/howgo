@@ -27,8 +27,9 @@ services:
       - key: LASWI_API_BASE
         value: https://appapi.rtstudio.top
       # name=未验证软件（应用标识写死为 LaswI ID）；token/loginkey=已验证软件，需填 64 位软件 Token
+      # 用 sync: false 交给面板控制，避免每次部署被 blueprint 重置回 name
       - key: LASWI_APP_TYPE
-        value: name
-      # 仅 token / loginkey 模式需要
+        sync: false
+      # 仅 token / loginkey 模式需要（软件 Token 是机密，绝不入库）
       - key: LASWI_SOFTWARE_TOKEN
         sync: false
